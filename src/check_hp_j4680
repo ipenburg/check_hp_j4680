@@ -1,4 +1,4 @@
-#!/usr/bin/env perl -w    # -*- cperl; cperl-indent-level: 4 -*-
+#!/usr/bin/env -S perl -w    # -*- cperl; cperl-indent-level: 4 -*-
 # Copyright (C) 2019, Roland van Ipenburg
 use strict;
 use warnings;
