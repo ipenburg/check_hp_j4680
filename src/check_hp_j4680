@@ -18,6 +18,7 @@ use Readonly;
 Readonly::Scalar my $SEP          => "\N{COMMA}\N{SPACE}";
 Readonly::Scalar my $PRINTER      => q{printer};
 Readonly::Scalar my $NETWORK      => q{network};
+Readonly::Scalar my $TIMEOUT      => 15;
 Readonly::Scalar my $URL_TEMPLATE => q{http://%s/index.htm?cat=%s&page=%s};
 Readonly::Hash my %FUNCTIONS      => (
     status => {},
@@ -57,10 +58,11 @@ Readonly::Hash my %LOG => (
 );
 ## use critic
 
-my $mp =
-  Monitoring::Plugin->new( usage =>
-q{Usage %s -H <host> [ -f <function> ] [ -t <timeout> ] [ -v|--verbose ] [ -c|--critical=<threshold> ] [ -w|--warning=<threshold> ]}
-  );
+my $mp = Monitoring::Plugin->new(
+    usage =>
+q{Usage %s -H <host> [ -f <function> ] [ -t <timeout> ] [ -v|--verbose ] [ -c|--critical=<threshold> ] [ -w|--warning=<threshold> ]},
+    version => v0.0.1,
+);
 
 $mp->add_arg(
     spec => q{host|H=s},
@@ -85,6 +87,8 @@ $mp->add_arg(
 );
 
 $mp->getopts;
+
+alarm( defined $mp->opts->timeout ? $mp->opts->timeout : $TIMEOUT );
 
 my $function = $mp->opts->function;
 
@@ -195,13 +199,15 @@ and 100, defaults warning 10 critical 1
 =item * color: Percentage of ink left in the tri-color cartridge, value between
 0 and 100, default warning 10 critical 1
 
-=item * pages: Total Page Count of the device, defauls warning 9000 critical
-10000
+=item * pages: Total Page Count of the pages the device has printed in it's
+lifetime, defauls warning 9000 critical 10000
 
 =item * status: Ready or not
 
 =item * signal: WiFi signal strength, 1 is worst, 5 is best, defaults warning 4
-critical 1 =back
+critical 1
+
+=back
 
 =back
 
@@ -248,14 +254,14 @@ the usage of the device. The defaults thresholds are:
 
 =item * pages 9000 10000
 
-=item * pages 4: 1:
+=item * signal 4: 1:
 
 =back
 
 =head1 INCOMPATIBILITIES
 
 There are no known incompatibilities but since the data is scraped from pages
-in an undefined format, different firmware could present the data in a
+in an undefined format, different firmware version could present the data in a
 different format which might break things. It is compatible with Firmware
 Version C<YWM2FN0820BR>.
 
