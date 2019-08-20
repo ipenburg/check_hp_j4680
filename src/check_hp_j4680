@@ -1,0 +1,303 @@
+#!/usr/bin/env perl -w    # -*- cperl; cperl-indent-level: 4 -*-
+# Copyright (C) 2019, Roland van Ipenburg
+use strict;
+use warnings;
+
+use utf8;
+use 5.016000;
+
+BEGIN { our $VERSION = v0.0.1; }
+
+use Monitoring::Plugin;
+use HTTP::Tiny;
+use List::MoreUtils;
+use English qw( -no_match_vars );
+
+use Readonly;
+## no critic (ProhibitCallsToUnexportedSubs)
+Readonly::Scalar my $SEP          => "\N{COMMA}\N{SPACE}";
+Readonly::Scalar my $PRINTER      => q{printer};
+Readonly::Scalar my $NETWORK      => q{network};
+Readonly::Scalar my $URL_TEMPLATE => q{http://%s/index.htm?cat=%s&page=%s};
+Readonly::Hash my %FUNCTIONS      => (
+    status => {},
+    black  => { warning => q{10:}, critical => q{1:} },
+    color  => { warning => q{10:}, critical => q{1:} },
+    pages  => { warning => 9_000, critical => 10_000 },
+    signal => { warning => q{4:}, critical => q{1:} },
+);
+Readonly::Hash my %PAGES => (
+    printer => {
+        cat  => 'info',
+        page => 'printerInfo'
+    },
+    network => {
+        cat  => 'network',
+        page => 'wirelessProt'
+    },
+);
+Readonly::Hash my %RE => (
+## no critic (ProhibitComplexRegexes)
+    'printer' => qr{
+		blackink=(?<black>[[:digit:]]+).*
+		colorink=(?<color>[[:digit:]]+).*
+		Status:.*?(?<status>Ready|Not[ ]ready).*
+		Total[ ]Page[ ]Count.*?(?<pages>[[:digit:]]+)
+	}sxm,
+## use critic
+    'network' => qr{
+		Signal[ ]Strength.*?:.*?(?<signal>[[:digit:]]+)
+	}isxm,
+);
+Readonly::Hash my %LOG => (
+    page     => q{Could not retrieve page '%s' to get data},
+    data     => q{Could not get data from page '%s' for function '%s'},
+    function => q{Unknown function '%s', must be one of %s},
+    check    => q{Function '%s' is level '%s'},
+);
+## use critic
+
+my $mp =
+  Monitoring::Plugin->new( usage =>
+q{Usage %s -H <host> [ -f <function> ] [ -t <timeout> ] [ -v|--verbose ] [ -c|--critical=<threshold> ] [ -w|--warning=<threshold> ]}
+  );
+
+$mp->add_arg(
+    spec => q{host|H=s},
+    help => q{-H, --host=HOST)}
+);
+$mp->add_arg(
+    spec => q{function|f=s},
+    help => q{-f, --function=FUNCTION } . join $SEP,
+    sort keys %FUNCTIONS
+);
+$mp->add_arg(
+    spec => 'warning|w=s',
+    help => q{-w, --warning=INTEGER:INTEGER .  See }
+      . q{https://www.monitoring-plugins.org/doc/guidelines.html#THRESHOLDFORMAT }
+      . q{for the threshold format.},
+);
+$mp->add_arg(
+    spec => 'critical|c=s',
+    help => q{-c, --critical=INTEGER:INTEGER .  See }
+      . q{https://www.monitoring-plugins.org/doc/guidelines.html#THRESHOLDFORMAT }
+      . q{for the threshold format.},
+);
+
+$mp->getopts;
+
+my $function = $mp->opts->function;
+
+## no critic (ProhibitCallsToUnexportedSubs)
+if ( List::MoreUtils::none { $function eq $_ } keys %FUNCTIONS ) {
+## use critic
+    $mp->plugin_die( sprintf $LOG{function},
+        ( $function, join $SEP, sort keys %FUNCTIONS ) );
+}
+my $cat = $PRINTER;
+if ( $function eq q{signal} ) {
+    $cat = $NETWORK;
+}
+my $page = sprintf $URL_TEMPLATE,
+  $mp->opts->host,
+  $PAGES{$cat}->{cat},
+  $PAGES{$cat}->{page};
+my $response = HTTP::Tiny->new->get($page);
+if ( $response->{success} ) {
+    $response->{content} =~ /$RE{$cat}/gsmx;
+    my $level = $LAST_PAREN_MATCH{$function};
+    if ( defined $level ) {
+        my $code;
+        if ( defined $FUNCTIONS{$function}->{warning} ) {
+            my $warning_threshold = $mp->opts->warning;
+            $warning_threshold ||= $FUNCTIONS{$function}->{warning};
+
+            my $critical_threshold = $mp->opts->critical;
+            $critical_threshold ||= $FUNCTIONS{$function}->{critical};
+
+            $code = $mp->check_threshold(
+                check    => $level,
+                warning  => $warning_threshold,
+                critical => $critical_threshold,
+            );
+            $mp->plugin_exit( $code, sprintf $LOG{check}, $function, $level );
+        }
+        else {
+            if ( $function eq q{status} ) {
+                ## no critic (ProhibitCallsToUnexportedSubs)
+                $code = Monitoring::Plugin::OK;
+                ## use critic
+                if ( $level ne q{Ready} ) {
+                    ## no critic (ProhibitCallsToUnexportedSubs)
+                    $code = Monitoring::Plugin::WARNING;
+                    ## use critic
+                }
+                $mp->plugin_exit( $code, sprintf $LOG{check},
+                    $function, $level );
+            }
+        }
+    }
+    else {
+        $mp->plugin_die( sprintf $LOG{data}, $page, $function );
+    }
+}
+else {
+    $mp->plugin_die( sprintf $LOG{page}, $page );
+}
+
+__END__
+
+=encoding utf8
+
+=for stopwords MERCHANTABILITY Ipenburg
+
+=head1 NAME
+
+check_hp_j4680 - check the status of an HP Officejet J4680 series printer
+
+=head1 USAGE
+
+B<check_hp_j4680> B<-H> I<host> B<-f> I<function>…
+
+=head1 DESCRIPTION
+
+B<check_hp_j4680> checks the status of several properties of an HP Officejet
+J4680 series printer.
+
+=head1 REQUIRED ARGUMENTS
+
+The host 
+
+=head1 OPTIONS
+
+=over 4
+=item B< -?, -h, --help>
+
+Show help
+
+=item B< -v, --verbose>
+
+Be more verbose
+
+=item B<--version>
+
+Show version and license
+
+=item B<--function>
+
+Check for function:
+
+=over 8
+
+=item * black: Percentage of ink left in the black cartridge, value between 0
+and 100, defaults warning 10 critical 1
+
+=item * color: Percentage of ink left in the tri-color cartridge, value between
+0 and 100, default warning 10 critical 1
+
+=item * pages: Total Page Count of the device, defauls warning 9000 critical
+10000
+
+=item * status: Ready or not
+
+=item * signal: WiFi signal strength, 1 is worst, 5 is best, defaults warning 4
+critical 1 =back
+
+=back
+
+=head1 DIAGNOSTICS
+
+=over 4
+
+=item * Could not retrieve page '%s' to get data
+(E) The HTML page containing the data could not be retrieved from the host
+
+=item * Could not get data from page '%s' for function '%s'
+(E) The HTML page containing the data could be retrieved from the host but the
+requested data was not found on that page
+
+=item * Unknown function '%s', must be one of black, color, pages, status, signal
+(E) The requested function is not supported, must be one of the printer properties
+'black', 'color', 'pages', 'status' or the WiFi property 'signal'.
+
+=back
+
+=head1 EXAMPLES
+
+C<check_hp_j4680 -H 192.168.0.100 -f black
+
+=head1 DEPENDENCIES
+
+Perl 5.16.0, Monitoring::Plugin, HTTP::Tiny, List::MoreUtils, Readonly, English
+
+=head1 EXIT STATUS
+
+The exist status is handled by the monitoring interface.
+
+=head1 CONFIGURATION
+
+The default warning and critical thresholds should be overridden by the
+standard -w and -c options of the monitoring interface because they depend on
+the usage of the device. The defaults thresholds are:
+
+=over 4
+
+=item * black 10: 1:
+
+=item * color 10: 1:
+
+=item * pages 9000 10000
+
+=item * pages 4: 1:
+
+=back
+
+=head1 INCOMPATIBILITIES
+
+There are no known incompatibilities but since the data is scraped from pages
+in an undefined format, different firmware could present the data in a
+different format which might break things. It is compatible with Firmware
+Version C<YWM2FN0820BR>.
+
+=head1 BUGS AND LIMITATIONS
+
+The 'ready' function only determines between 'Ready' and not.
+
+Please report any bugs or feature requests at
+
+L<Issues for github.com|https://github.com/ipenburg/check_hp_j4680/issues>.
+
+=head1 AUTHOR
+
+Roland van Ipenburg, E<lt>ipenburg@xs4all.nlE<gt>
+
+=head1 LICENSE AND COPYRIGHT
+
+Copyright 2019 by Roland van Ipenburg
+This program is free software; you can redistribute it and/or modify
+it under the GNU General Public License v3.0.
+
+=head1 DISCLAIMER OF WARRANTY
+
+BECAUSE THIS SOFTWARE IS LICENSED FREE OF CHARGE, THERE IS NO WARRANTY
+FOR THE SOFTWARE, TO THE EXTENT PERMITTED BY APPLICABLE LAW. EXCEPT WHEN
+OTHERWISE STATED IN WRITING THE COPYRIGHT HOLDERS AND/OR OTHER PARTIES
+PROVIDE THE SOFTWARE "AS IS" WITHOUT WARRANTY OF ANY KIND, EITHER
+EXPRESSED OR IMPLIED, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
+WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE. THE
+ENTIRE RISK AS TO THE QUALITY AND PERFORMANCE OF THE SOFTWARE IS WITH
+YOU. SHOULD THE SOFTWARE PROVE DEFECTIVE, YOU ASSUME THE COST OF ALL
+NECESSARY SERVICING, REPAIR, OR CORRECTION.
+
+IN NO EVENT UNLESS REQUIRED BY APPLICABLE LAW OR AGREED TO IN WRITING
+WILL ANY COPYRIGHT HOLDER, OR ANY OTHER PARTY WHO MAY MODIFY AND/OR
+REDISTRIBUTE THE SOFTWARE AS PERMITTED BY THE ABOVE LICENSE, BE
+LIABLE TO YOU FOR DAMAGES, INCLUDING ANY GENERAL, SPECIAL, INCIDENTAL,
+OR CONSEQUENTIAL DAMAGES ARISING OUT OF THE USE OR INABILITY TO USE
+THE SOFTWARE (INCLUDING BUT NOT LIMITED TO LOSS OF DATA OR DATA BEING
+RENDERED INACCURATE OR LOSSES SUSTAINED BY YOU OR THIRD PARTIES OR A
+FAILURE OF THE SOFTWARE TO OPERATE WITH ANY OTHER SOFTWARE), EVEN IF
+SUCH HOLDER OR OTHER PARTY HAS BEEN ADVISED OF THE POSSIBILITY OF
+SUCH DAMAGES.
+
+=cut
