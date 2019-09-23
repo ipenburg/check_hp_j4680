@@ -6,7 +6,7 @@ use warnings;
 use utf8;
 use 5.016000;
 
-BEGIN { our $VERSION = v0.0.1; }
+BEGIN { our $VERSION = v0.0.2; }
 
 use Monitoring::Plugin;
 use HTTP::Tiny;
@@ -42,7 +42,7 @@ Readonly::Hash my %RE => (
     'printer' => qr{
 		blackink=(?<black>[[:digit:]]+).*
 		colorink=(?<color>[[:digit:]]+).*
-		Status:.*?(?<status>Ready|Not[ ]ready).*
+		Status:.*?(?<status>Ready|Processing[ ]Job|Not[ ]ready).*
 		Total[ ]Page[ ]Count.*?(?<pages>[[:digit:]]+)
 	}sxm,
 ## use critic
@@ -61,7 +61,7 @@ Readonly::Hash my %LOG => (
 my $mp = Monitoring::Plugin->new(
     usage =>
 q{Usage %s -H <host> [ -f <function> ] [ -t <timeout> ] [ -v|--verbose ] [ -c|--critical=<threshold> ] [ -w|--warning=<threshold> ]},
-    version => v0.0.1,
+    version => v0.0.2,
 );
 
 $mp->add_arg(
@@ -131,7 +131,7 @@ if ( $response->{success} ) {
                 ## no critic (ProhibitCallsToUnexportedSubs)
                 $code = Monitoring::Plugin::OK;
                 ## use critic
-                if ( $level ne q{Ready} ) {
+                if ( $level ne q{Ready} || $level ne q{Processing Job} ) {
                     ## no critic (ProhibitCallsToUnexportedSubs)
                     $code = Monitoring::Plugin::WARNING;
                     ## use critic
@@ -166,7 +166,7 @@ B<check_hp_j4680> B<-H> I<host> B<-f> I<function>…
 =head1 DESCRIPTION
 
 B<check_hp_j4680> checks the status of several properties of an HP Officejet
-J4680 series printer.
+J4680 series printer. To be used as a L<Nagios plugin|https://exchange.nagios.org/directory/Plugins/Printing/check_hp_j4680/details>
 
 =head1 REQUIRED ARGUMENTS
 
@@ -175,6 +175,7 @@ The host
 =head1 OPTIONS
 
 =over 4
+
 =item B< -?, -h, --help>
 
 Show help
@@ -230,7 +231,7 @@ requested data was not found on that page
 
 =head1 EXAMPLES
 
-C<check_hp_j4680 -H 192.168.0.100 -f black
+C<check_hp_j4680 -H 192.168.0.100 -f black>
 
 =head1 DEPENDENCIES
 
